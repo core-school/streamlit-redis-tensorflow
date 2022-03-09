@@ -9,9 +9,7 @@ $ bash start.sh
 ```
 
 Consume frames and run inference:
-bash````
+
+```bash
 $ bash consume.sh
-
-```
-
 ```
