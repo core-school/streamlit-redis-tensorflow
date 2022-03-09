@@ -1,33 +1,13 @@
-from config import REDIS_PREDICTIONS_CHANNEL
 from streamlit_webrtc import VideoProcessorBase, webrtc_streamer, WebRtcMode
 from av import VideoFrame
 import asyncio
-from redis.client import connect, get_connection
 from redis.produce import send_frame
-from threading import Thread
-from streamlit.script_run_context import add_script_run_ctx
+import cv2
+from listen_redis import get_current_prediction, start_prediction_thread
 
 
-async def prepare_redis():
-    await connect()
-    await connect("frames_connection")
-
-    # Subscribe to predictions
-    subscriber = await get_connection().start_subscribe()
-    await subscriber.subscribe([REDIS_PREDICTIONS_CHANNEL])
-    print("💪🏻 Waiting for predictions...")
-
-    # Inside a while loop, wait for incoming events.
-    while True:
-        msg = await subscriber.next_published()
-        prediction = msg.value
-        print(f"[channel: {prediction}] Prediction:", msg)
-
-
-def send_frame_task(frame):
-    frame_data = frame.to_ndarray()
+def send_frame_task(frame_data):
     # # @boyander: send task to bg thread and forget
-    # task = loop.create_task(send_frame(frame_data))
     loop = asyncio.get_event_loop()
     loop.create_task(send_frame(frame_data, "frames_connection"))
 
@@ -41,14 +21,24 @@ class VideoProcessor(VideoProcessorBase):
         self.predict_threshold = 100
 
     def recv(self, frame: VideoFrame) -> VideoFrame:
-
         if self.frame_count > self.predict_threshold:
-            send_frame_task(frame)
+            # Convert frame to numpy array and send it to bg thread to redis
+            frame_data = frame.to_ndarray()
+            send_frame_task(frame_data)
             self.frame_count = 0
         else:
             self.frame_count += 1
 
-        return frame
+        # Add prediction to frame
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        org = (50, 50)
+        fontScale = 1
+        color = (255, 0, 0)
+        thickness = 2
+        frame = cv2.putText(frame.to_ndarray(format="bgr24"), f"Prediction: {get_current_prediction()}", org, font,
+                            fontScale, color, thickness, cv2.LINE_AA)
+
+        return VideoFrame.from_ndarray(frame, format="bgr24")
 
 
 webrtc_ctx = webrtc_streamer(
@@ -59,17 +49,4 @@ webrtc_ctx = webrtc_streamer(
     async_processing=True
 )
 
-predictions_loop = asyncio.new_event_loop()
-
-
-def run_forever():
-    print("Started BG Thread")
-    asyncio.set_event_loop(predictions_loop)
-    predictions_loop.run_until_complete(prepare_redis())
-    # predictions_loop.run_forever()
-
-
-# Run coros in bg thread
-thread = Thread(target=run_forever, daemon=True)
-add_script_run_ctx(thread)
-thread.start()
+start_prediction_thread()

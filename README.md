@@ -13,3 +13,7 @@ Consume frames and run inference:
 ```bash
 $ bash consume.sh
 ```
+
+## References
+
+- https://pypi.org/project/asyncio-redis/
